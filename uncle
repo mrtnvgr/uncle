@@ -1,11 +1,13 @@
 #!/bin/python
 import argparse, os
 
-version = "0.0.1"
+version = "0.0.2"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--cue")
 parser.add_argument("-p", "--output-path", default="")
+parser.add_argument("-r", "--remove", help="remove source files", action="store_true")
+parser.add_argument("-d", "--dry", help="only print commands", action="store_true")
 parser.add_argument("-v", "--version", action="store_true")
 args = parser.parse_args()
 if args.version==True:
@@ -17,12 +19,18 @@ elif args.cue==None:
 
 cue = open(args.cue).read().split("\n")
 
+if args.output_path!="" and not os.path.exists(os.path.join(os.getcwd(), args.output_path)):
+    print("error: output_path not found")
+    exit(1)
+
 def timegen(time):
     time = time.split(":")
-    minutes = time[0]
-    seconds = time[1]
-    ticks = time[2]
-    return f"00:{minutes}:{seconds}.{ticks}"
+    hours = "00"
+    minutes,seconds,ticks = time
+    if int(minutes)>60:
+        hours = int(minutes)//60
+        minutes = int(minutes)%60
+    return f"{hours:02}:{minutes:02}:{seconds}.{ticks}"
 
 rems = {}
 tracks = {}
@@ -55,4 +63,15 @@ for i in range(len(tracks)):
         nexttime = ""
     title = track['TITLE'].rstrip('\"') + "." + rems['FILE'].split(".")[-1]
     time = timegen(track['INDEX'])
-    os.system(f"ffmpeg -i {rems['FILE']} -ss {time}{nexttime} {args.output_path}{title}")
+    execline = f"ffmpeg -loglevel 0 -hide_banner -i {rems['FILE']} -ss {time}{nexttime} {args.output_path}{title}" 
+    if args.dry:
+        print(execline)
+    else:
+        print(args.output_path+title)
+        os.system(execline)
+if args.remove:
+    try:
+        os.remove(rems['FILE'].replace('"',''))
+        os.remove(args.cue)
+    except Exception as e:
+        print(f"error: {e}")
