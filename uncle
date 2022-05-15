@@ -1,0 +1,58 @@
+#!/bin/python
+import argparse, os
+
+version = "0.0.1"
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-c", "--cue")
+parser.add_argument("-p", "--output-path", default="")
+parser.add_argument("-v", "--version", action="store_true")
+args = parser.parse_args()
+if args.version==True:
+    print(f"uncle v{version}")
+    exit(0)
+elif args.cue==None:
+    print("error: the following arguments are required: -c/--cue")
+    exit(1)
+
+cue = open(args.cue).read().split("\n")
+
+def timegen(time):
+    time = time.split(":")
+    minutes = time[0]
+    seconds = time[1]
+    ticks = time[2]
+    return f"00:{minutes}:{seconds}.{ticks}"
+
+rems = {}
+tracks = {}
+currenttrack = 0
+for line in cue:
+    cueline = [x for x in line.split(" ") if x!=""]
+    if cueline!=[]:
+        if cueline[0]=="REM":
+            rems[cueline[1]] = " ".join(cueline[2:])
+        elif cueline[0]=="FILE":
+            rems[cueline[0]] = " ".join(" ".join(cueline[1:]).split(" ")[:-1])
+        elif cueline[0]=="PERFORMER" or cueline[0]=="TITLE":
+            if currenttrack!=0:
+                tracks[currenttrack][cueline[0]] = " ".join(cueline[1:])
+            else:
+                rems[cueline[0]] = " ".join(cueline[1:])
+        elif cueline[0]=="TRACK":
+            currenttrack = cueline[1]
+            tracks[currenttrack] = {}
+        elif cueline[0]=="INDEX":
+            tracks[currenttrack]["INDEX"] = cueline[2]
+        else:
+            print("UNSUPPORTED: " + cueline[0])
+tracks = list(tracks.values())
+for i in range(len(tracks)):
+    track = tracks[i]
+    if len(tracks)>i+1:
+        nexttime = " -t "+timegen(tracks[i+1]['INDEX'])
+    else:
+        nexttime = ""
+    title = track['TITLE'].rstrip('\"') + "." + rems['FILE'].split(".")[-1]
+    time = timegen(track['INDEX'])
+    os.system(f"ffmpeg -i {rems['FILE']} -ss {time}{nexttime} {args.output_path}{title}")
