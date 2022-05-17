@@ -1,11 +1,13 @@
 #!/bin/python
 import argparse, os
 
-version = "0.0.3-1"
+version = "0.0.3-2"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--cue")
 parser.add_argument("-p", "--path", default="")
+parser.add_argument("-t", "--track", help="track index to extract", action="append", type=int)
+parser.add_argument("-l", "--list", help="list tracks from cue", action="store_true")
 parser.add_argument("-r", "--remove", help="remove source file", action="store_true")
 parser.add_argument("-rc", "--remove-cue", help="remove source cue file", action="store_true")
 parser.add_argument("-j", "--join", help="joins multiple files into one", action="store_true")
@@ -28,6 +30,12 @@ if args.path!="" and not os.path.exists(os.path.join(os.getcwd(), args.path)):
 def timegen(time):
     minutes,seconds,ticks = time.split(":")
     return f"{minutes}:{seconds}.{ticks}"
+
+def unsupportedfile():
+    print("error: unsupported audio format")
+    exit(1)
+
+def getformat(file): return file.split(".")[-1]
 
 rems = {}
 tracks = {}
@@ -56,23 +64,44 @@ tracks = list(tracks.values())
 if not args.join:
     for i in range(len(tracks)):
         track = tracks[i]
-        if len(tracks)>i+1:
-            nexttime = " --until="+timegen(tracks[i+1]['INDEX'])
+        if args.track!=None:
+            if i+1 not in args.track:
+                continue
+        if args.list:
+            print(f"[TRACK LIST] -> {track['TITLE']} ({i+1})")
         else:
-            nexttime = ""
-        title = track['TITLE'].rstrip('\"') + "." + rems['FILE'].split(".")[-1]
-        time = timegen(track['INDEX'])
-        metadata = []
-        trackdata = rems|track
-        for rem in trackdata:
-            if trackdata[rem][0]!='"': trackdata[rem] = f'"{trackdata[rem]}"'
-            metadata.append(f'-metadata {rem}={trackdata[rem]}')
-        execline = f"flac -f -c {rems['FILE']} --skip={time}{nexttime} -o {args.path}{title}"
-        if args.dry:
-            print(execline)
-        else:
-            os.system(execline)
-            print(f"[{i+1}/{len(tracks)}] "+args.path+title)
+            if len(tracks)>i+1:
+                if "flac" in getformat(rems['FILE']):
+                    nexttime = " --until="+timegen(tracks[i+1]['INDEX'])
+                else:
+                    unsupportedfile()
+            else:
+                nexttime = ""
+            title = track['TITLE'].rstrip('\"') + "." + getformat(rems['FILE'])
+            time = timegen(track['INDEX'])
+
+            metadata = []
+            trackdata = rems|track
+            for rem in trackdata:
+                if trackdata[rem][0]!='"': trackdata[rem] = f'"{trackdata[rem]}"'
+                if "flac" in getformat(rems['FILE']):
+                    metadata.append(f'--set-tag={rem}={trackdata[rem]}')
+                else:
+                    unsupportedfile()
+            
+            if "flac" in getformat(rems['FILE']):
+                execlines = [f"flac --totally-silent -f -c {rems['FILE']} --skip={time}{nexttime} -o {args.path}{title}"] # TODO: make ape, m4a, wav and others formats support
+                execlines.append(f"metaflac --remove-all-tags {' '.join(metadata)} {args.path}{title}")
+            else:
+                unsupportedfile()
+
+            if args.dry:
+                print("\n".join(execlines))
+            else:
+                for execline in execlines:
+                    os.system(execline)
+                print(f"[SPLIT] {rems['FILE']} -> {args.path}{title} ({i+1}/{len(tracks)})")
+
     if args.remove:
         try:
             os.remove(rems['FILE'].replace('"',''))
@@ -80,14 +109,13 @@ if not args.join:
         except Exception as e:
             print(f"error: {e}")
 else:
-    print("Under construction")
+    print("Under construction!")
     exit(1)
-    # TODO: !!!
     files = []
     for file in tracks:
-        title = file['TITLE'].rstrip('\"') + "." + rems['FILE'].split(".")[-1]
+        title = file['TITLE'].rstrip('\"') + "." + getformat(rems['FILE'])
         files.append(f"-i {args.path}{title}")
-    execline = f"ffmpeg -hide_banner {' '.join(files)} -filter_complex [0:a][1:a]concat=n={len(files)}:v=0:a=1 {rems['FILE']}"
+    #execline = f"ffmpeg -hide_banner {' '.join(files)} -filter_complex [0:a][1:a]concat=n={len(files)}:v=0:a=1 {rems['FILE']}"
     if args.dry:
         print(execline)
     else:
