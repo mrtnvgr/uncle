@@ -1,12 +1,14 @@
 #!/bin/python
 import argparse, os
 
-version = "0.0.2"
+version = "0.0.3-1"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--cue")
-parser.add_argument("-p", "--output-path", default="")
-parser.add_argument("-r", "--remove", help="remove source files", action="store_true")
+parser.add_argument("-p", "--path", default="")
+parser.add_argument("-r", "--remove", help="remove source file", action="store_true")
+parser.add_argument("-rc", "--remove-cue", help="remove source cue file", action="store_true")
+parser.add_argument("-j", "--join", help="joins multiple files into one", action="store_true")
 parser.add_argument("-d", "--dry", help="only print commands", action="store_true")
 parser.add_argument("-v", "--version", action="store_true")
 args = parser.parse_args()
@@ -19,18 +21,13 @@ elif args.cue==None:
 
 cue = open(args.cue).read().split("\n")
 
-if args.output_path!="" and not os.path.exists(os.path.join(os.getcwd(), args.output_path)):
-    print("error: output_path not found")
+if args.path!="" and not os.path.exists(os.path.join(os.getcwd(), args.path)):
+    print("error: path not found")
     exit(1)
 
 def timegen(time):
-    time = time.split(":")
-    hours = "00"
-    minutes,seconds,ticks = time
-    if int(minutes)>60:
-        hours = int(minutes)//60
-        minutes = int(minutes)%60
-    return f"{hours:02}:{minutes:02}:{seconds}.{ticks}"
+    minutes,seconds,ticks = time.split(":")
+    return f"{minutes}:{seconds}.{ticks}"
 
 rems = {}
 tracks = {}
@@ -51,27 +48,54 @@ for line in cue:
             currenttrack = cueline[1]
             tracks[currenttrack] = {}
         elif cueline[0]=="INDEX":
-            tracks[currenttrack]["INDEX"] = cueline[2]
+            if not "INDEX" in tracks[currenttrack].keys():
+                tracks[currenttrack]["INDEX"] = cueline[2]
         else:
             print("UNSUPPORTED: " + cueline[0])
 tracks = list(tracks.values())
-for i in range(len(tracks)):
-    track = tracks[i]
-    if len(tracks)>i+1:
-        nexttime = " -t "+timegen(tracks[i+1]['INDEX'])
-    else:
-        nexttime = ""
-    title = track['TITLE'].rstrip('\"') + "." + rems['FILE'].split(".")[-1]
-    time = timegen(track['INDEX'])
-    execline = f"ffmpeg -loglevel 0 -hide_banner -i {rems['FILE']} -ss {time}{nexttime} {args.output_path}{title}" 
+if not args.join:
+    for i in range(len(tracks)):
+        track = tracks[i]
+        if len(tracks)>i+1:
+            nexttime = " --until="+timegen(tracks[i+1]['INDEX'])
+        else:
+            nexttime = ""
+        title = track['TITLE'].rstrip('\"') + "." + rems['FILE'].split(".")[-1]
+        time = timegen(track['INDEX'])
+        metadata = []
+        trackdata = rems|track
+        for rem in trackdata:
+            if trackdata[rem][0]!='"': trackdata[rem] = f'"{trackdata[rem]}"'
+            metadata.append(f'-metadata {rem}={trackdata[rem]}')
+        execline = f"flac -f -c {rems['FILE']} --skip={time}{nexttime} -o {args.path}{title}"
+        if args.dry:
+            print(execline)
+        else:
+            os.system(execline)
+            print(f"[{i+1}/{len(tracks)}] "+args.path+title)
+    if args.remove:
+        try:
+            os.remove(rems['FILE'].replace('"',''))
+            if args.remove_cue: os.remove(args.cue)
+        except Exception as e:
+            print(f"error: {e}")
+else:
+    print("Under construction")
+    exit(1)
+    # TODO: !!!
+    files = []
+    for file in tracks:
+        title = file['TITLE'].rstrip('\"') + "." + rems['FILE'].split(".")[-1]
+        files.append(f"-i {args.path}{title}")
+    execline = f"ffmpeg -hide_banner {' '.join(files)} -filter_complex [0:a][1:a]concat=n={len(files)}:v=0:a=1 {rems['FILE']}"
     if args.dry:
         print(execline)
     else:
-        print(args.output_path+title)
         os.system(execline)
-if args.remove:
-    try:
-        os.remove(rems['FILE'].replace('"',''))
-        os.remove(args.cue)
-    except Exception as e:
-        print(f"error: {e}")
+        print("PLACEHOLDER !TODO!")
+    if args.remove:
+        for file in files:
+            try:
+                os.remove(file.split("file '")[1][:-1])
+            except Exception as e:
+                print(f"error: {e}")
