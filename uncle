@@ -1,16 +1,20 @@
 #!/bin/python
 import argparse, os
 
-version = "0.0.4"
+version = "0.0.5"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--cue")
 parser.add_argument("-p", "--path", default="")
 parser.add_argument("-t", "--track", help="track index to extract", action="append", type=int)
-parser.add_argument("-l", "--list", help="list tracks from cue", action="store_true")
+parser.add_argument("-m", "--message", help="replace 'COMMENT' tag")
+parser.add_argument("-tg", "--tag", help="replace any tag(s)\nExample: 'TAG1:Text1|TAG2:Text2'", type=lambda x: {k:v for k,v in (i.split(':') for i in x.split('|'))})
+parser.add_argument("-rtg", "--remove-tag", help="remove tag from tracks", action="append")
+parser.add_argument("-tgi", "--tags-index", help="track index to print tag list", action="append", type=int)
+parser.add_argument("-tgs", "--tags", help="tags from cue", action="store_true")
+parser.add_argument("-l", "--list", help="tracks from cue", action="store_true")
 parser.add_argument("-r", "--remove", help="remove source file", action="store_true")
 parser.add_argument("-rc", "--remove-cue", help="remove source cue file", action="store_true")
-parser.add_argument("-j", "--join", help="joins multiple files into one", action="store_true")
 parser.add_argument("-d", "--dry", help="only print commands", action="store_true")
 parser.add_argument("-v", "--version", action="store_true")
 args = parser.parse_args()
@@ -31,10 +35,6 @@ def timegen(time):
     minutes,seconds,ticks = time.split(":")
     return f"{minutes}:{seconds}.{ticks}"
 
-def unsupportedfile():
-    print("error: unsupported audio format")
-    exit(1)
-
 def getformat(file): return file.split(".")[-1]
 
 rems = {}
@@ -44,10 +44,13 @@ for line in cue:
     cueline = [x for x in line.split(" ") if x!=""]
     if cueline!=[]:
         if cueline[0]=="REM":
-            rems[cueline[1]] = " ".join(cueline[2:])
+            if cueline[1]=="COMMENT" and args.message!=None:
+                rems['COMMENT'] = args.message
+            else:
+                rems[cueline[1]] = " ".join(cueline[2:])
         elif cueline[0]=="FILE":
             rems[cueline[0]] = " ".join(" ".join(cueline[1:]).split(" ")[:-1])
-        elif cueline[0]=="PERFORMER" or cueline[0]=="TITLE":
+        elif cueline[0]=="PERFORMER" or cueline[0]=="TITLE" or cueline[0]=="FLAGS":
             if currenttrack!=0:
                 tracks[currenttrack][cueline[0]] = " ".join(cueline[1:])
             else:
@@ -61,83 +64,75 @@ for line in cue:
         else:
             print("UNSUPPORTED: " + cueline[0])
 tracks = list(tracks.values())
-if not args.join:
-    
-    formatConversion = False
-    if not args.list and "flac" not in getformat(rems['FILE']):
-        formatConversion = True
-        converted = rems['FILE'].rstrip('\"')[:-4]
-        if "ape" in getformat(rems['FILE']):
-            os.system(f"mac {rems['FILE']} auto -d")
-        if "m4a" in getformat(rems['FILE']):
-            os.system(f'ffmpeg -i {rems["FILE"]} {converted}.flac"')
-        else:
-            os.system(f'flac --delete-input-file --best {converted}.wav" -o {converted}.flac"')
-        rems['FILE'] = converted+'.flac"'
 
+if args.tags or args.tags_index:
     for i in range(len(tracks)):
-        track = tracks[i]
-        if args.track!=None:
-            if i+1 not in args.track:
-                continue
-        if args.list:
-            print(f"[TRACK LIST] -> {track['TITLE']} ({i+1})")
+        if args.tags_index:
+            if not i+1 in args.tags_index: continue
+        track = rems|tracks[i]
+        if args.tag: track = track|args.tag
+        if args.remove_tag:
+            for tag in args.remove_tag:
+                if tag in track: track.pop(tag)
+        print()
+        print(f"[TAG LIST] -> [{i+1}]")
+        for i in track: print(f"{i}: {track[i]}")
+    print()
+    exit(0)
+
+formatConversion = False
+if not args.list and "flac" not in getformat(rems['FILE']):
+    formatConversion = rems['FILE']
+    converted = formatConversion.rstrip('\"').split(".")[0]
+    if "ape" in getformat(rems['FILE']):
+        os.system(f"mac {rems['FILE']} auto -d")
+        os.system(f'flac --totally-silent --delete-input-file --best {converted}.wav" -o {converted}.flac"')
+    elif "m4a" in getformat(rems['FILE']):
+        os.system(f'ffmpeg -i {rems["FILE"]} {converted}.flac"')
+    elif "wav" in getformat(rems['FILE']):
+        os.system(f'flac --totally-silent --delete-input-file --best {converted}.wav" -o {converted}.flac"')
+    rems['FILE'] = converted+'.flac"'
+
+for i in range(len(tracks)):
+    track = tracks[i]
+    if args.track!=None:
+        if i+1 not in args.track:
+            continue
+    if args.list:
+        print(f"[TRACK LIST] -> {track['TITLE']} ({i+1})")
+    else:
+        if len(tracks)>i+1:
+            nexttime = " --until="+timegen(tracks[i+1]['INDEX'])
         else:
-            if len(tracks)>i+1:
-                if "flac" in getformat(rems['FILE']):
-                    nexttime = " --until="+timegen(tracks[i+1]['INDEX'])
-                else:
-                    unsupportedfile()
-            else:
-                nexttime = ""
-            title = track['TITLE'].rstrip('\"') + f'.{getformat(rems["FILE"])}'
-            if title.startswith('"') and not title.endswith('"'): title = title+'"'
-            time = timegen(track['INDEX'])
+            nexttime = ""
+        title = track['TITLE'].rstrip('\"') + f'.{getformat(rems["FILE"])}'
+        if title.startswith('"') and not title.endswith('"'): title = title+'"'
+        time = timegen(track['INDEX'])
 
-            metadata = []
-            trackdata = rems|track
-            for rem in trackdata:
-                if trackdata[rem][0]!='"': trackdata[rem] = f'"{trackdata[rem]}"'
-                if "flac" in getformat(rems['FILE']):
-                    metadata.append(f'--set-tag={rem}={trackdata[rem]}')
-                else:
-                    unsupportedfile()
-            
-            if "flac" in getformat(rems['FILE']):
-                execlines = [f"flac --totally-silent --best -f -c {rems['FILE']} --skip={time}{nexttime} -o {args.path}{title}"] # TODO: make m4a and others formats support
-                execlines.append(f"metaflac --remove-all-tags {' '.join(metadata)} {args.path}{title}")
-            else:
-                unsupportedfile()
+        metadata = []
+        trackdata = rems|track
+        if args.tag: trackdata = trackdata|args.tag
+        if args.remove_tag:
+            for tag in args.remove_tag:
+                if tag in trackdata: trackdata.pop(tag)
+        for rem in trackdata:
+            if trackdata[rem][0]!='"': trackdata[rem] = f'"{trackdata[rem]}"'
+            metadata.append(f'--set-tag={rem}={trackdata[rem]}')
+        
+        execlines = [f"flac --totally-silent --best -f -c {rems['FILE']} --skip={time}{nexttime} -o {args.path}{title}"] # TODO: make m4a and others formats support
+        execlines.append(f"metaflac --no-utf8-convert --remove-all-tags {' '.join(metadata)} {args.path}{title}")
 
-            if args.dry:
-                print("\n".join(execlines))
-            else:
-                for execline in execlines:
-                    os.system(execline)
-                print(f"[SPLIT] {rems['FILE']} -> {args.path}{title} ({i+1}/{len(tracks)})")
+        if args.dry:
+            print("\n".join(execlines))
+        else:
+            for execline in execlines:
+                os.system(execline)
+            print(f"[SPLIT] {rems['FILE']} -> {args.path}{title} ({i+1}/{len(tracks)})")
 
-    if args.remove or formatConversion:
-        try:
-            os.remove(rems['FILE'].replace('"',''))
-            if args.remove_cue: os.remove(args.cue)
-        except Exception as e:
-            print(f"error: {e}")
-#else:
-#    print("Under construction!")
-#    exit(1)
-#    files = []
-#    for file in tracks:
-#        title = file['TITLE'].rstrip('\"') + "." + getformat(rems['FILE'])
-#        files.append(f"-i {args.path}{title}")
-#    #execline = f"ffmpeg -hide_banner {' '.join(files)} -filter_complex [0:a][1:a]concat=n={len(files)}:v=0:a=1 {rems['FILE']}"
-#    if args.dry:
-#        print(execline)
-#    else:
-#        os.system(execline)
-#        print("PLACEHOLDER !TODO!")
-#    if args.remove:
-#        for file in files:
-#            try:
-#                os.remove(file.split("file '")[1][:-1])
-#            except Exception as e:
-#                print(f"error: {e}")
+if (args.remove or formatConversion!=False) and not (args.list):
+    try:
+        if formatConversion!=False: os.remove(formatConversion.replace('"', ''))
+        os.remove(rems['FILE'].replace('"',''))
+        if args.remove_cue: os.remove(args.cue)
+    except Exception as e:
+        print(f"error: {e}")
