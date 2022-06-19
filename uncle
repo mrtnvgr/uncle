@@ -1,138 +1,183 @@
-#!/bin/python
+#!/bin/python3
 import argparse, os
 
-version = "0.0.5"
-
-parser = argparse.ArgumentParser()
-parser.add_argument("-c", "--cue")
-parser.add_argument("-p", "--path", default="")
-parser.add_argument("-t", "--track", help="track index to extract", action="append", type=int)
-parser.add_argument("-m", "--message", help="replace 'COMMENT' tag")
-parser.add_argument("-tg", "--tag", help="replace any tag(s)\nExample: 'TAG1:Text1|TAG2:Text2'", type=lambda x: {k:v for k,v in (i.split(':') for i in x.split('|'))})
-parser.add_argument("-rtg", "--remove-tag", help="remove tag from tracks", action="append")
-parser.add_argument("-tgi", "--tags-index", help="track index to print tag list", action="append", type=int)
-parser.add_argument("-tgs", "--tags", help="tags from cue", action="store_true")
-parser.add_argument("-l", "--list", help="tracks from cue", action="store_true")
-parser.add_argument("-r", "--remove", help="remove source file", action="store_true")
-parser.add_argument("-rc", "--remove-cue", help="remove source cue file", action="store_true")
-parser.add_argument("-d", "--dry", help="only print commands", action="store_true")
-parser.add_argument("-v", "--version", action="store_true")
-args = parser.parse_args()
-if args.version==True:
-    print(f"uncle v{version}")
-    exit(0)
-elif args.cue==None:
-    print("error: the following arguments are required: -c/--cue")
-    exit(1)
-
-cue = open(args.cue).read().split("\n")
-
-if args.path!="" and not os.path.exists(os.path.join(os.getcwd(), args.path)):
-    print("error: path not found")
-    exit(1)
-
-def timegen(time):
-    minutes,seconds,ticks = time.split(":")
-    return f"{minutes}:{seconds}.{ticks}"
-
-def getformat(file): return file.split(".")[-1]
-
-rems = {}
-tracks = {}
-currenttrack = 0
-for line in cue:
-    cueline = [x for x in line.split(" ") if x!=""]
-    if cueline!=[]:
-        if cueline[0]=="REM":
-            if cueline[1]=="COMMENT" and args.message!=None:
-                rems['COMMENT'] = args.message
-            else:
-                rems[cueline[1]] = " ".join(cueline[2:])
-        elif cueline[0]=="FILE":
-            rems[cueline[0]] = " ".join(" ".join(cueline[1:]).split(" ")[:-1])
-        elif cueline[0]=="PERFORMER" or cueline[0]=="TITLE" or cueline[0]=="FLAGS":
-            if currenttrack!=0:
-                tracks[currenttrack][cueline[0]] = " ".join(cueline[1:])
-            else:
-                rems[cueline[0]] = " ".join(cueline[1:])
-        elif cueline[0]=="TRACK":
-            currenttrack = cueline[1]
-            tracks[currenttrack] = {}
-        elif cueline[0]=="INDEX":
-            if not "INDEX" in tracks[currenttrack].keys():
-                tracks[currenttrack]["INDEX"] = cueline[2]
+class main:
+    def __init__(self):
+        self.version = "0.1.5"
+        self.rems = {}
+        self.tracks = {}
+        self.sourceFile = False
+        self.runtime()
+        
+    def runtime(self):
+        self.parseArgs()
+        self.checkArgs()
+        self.cueParse()
+        if self.args.tags or self.args.tags_index:
+            self.tagList()
+        elif self.args.list:
+            self.trackList()
         else:
-            print("UNSUPPORTED: " + cueline[0])
-tracks = list(tracks.values())
+            if "flac" not in self.getFileFormat(self.rems["FILE"]):
+                self.convertFile()
+            self.splitFlac()
+        self.cleanup()
 
-if args.tags or args.tags_index:
-    for i in range(len(tracks)):
-        if args.tags_index:
-            if not i+1 in args.tags_index: continue
-        track = rems|tracks[i]
-        if args.tag: track = track|args.tag
-        if args.remove_tag:
-            for tag in args.remove_tag:
-                if tag in track: track.pop(tag)
+
+    def parseArgs(self):
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-c", "--cue")
+        parser.add_argument("-p", "--path", default="")
+        parser.add_argument("-t", "--track", help="track index to extract", action="append", type=int)
+        parser.add_argument("-m", "--message", help="replace 'COMMENT' tag")
+        parser.add_argument("-tg", "--tag", help="replace any tag(s)\nExample: 'TAG1:Text1|TAG2:Text2'", type=lambda x: {k:v for k,v in (i.split(':') for i in x.split('|'))})
+        parser.add_argument("-rtg", "--remove-tag", help="remove tag from tracks", action="append")
+        parser.add_argument("-tgi", "--tags-index", help="track index to print tag list", action="append", type=int)
+        parser.add_argument("-tgs", "--tags", help="tags from cue", action="store_true")
+        parser.add_argument("-l", "--list", help="tracks from cue", action="store_true")
+        parser.add_argument("-r", "--remove", help="remove source file", action="store_true")
+        parser.add_argument("-rc", "--remove-cue", help="remove source cue file", action="store_true")
+        parser.add_argument("-d", "--dry", help="only print commands", action="store_true")
+        parser.add_argument("-v", "--version", action="store_true")
+        self.args = parser.parse_args()
+
+    def checkArgs(self):
+        if self.args.version==True:
+            print(f"uncle v{self.version}")
+            exit(0)
+        elif self.args.cue==None:
+            print("error: the following arguments are required: -c/--cue")
+            exit(1)
+        else:
+            self.cueCheck()
+
+    def cueCheck(self):
+        self.cue = open(self.args.cue).read().split("\n")
+        exists = os.path.exists(os.path.join(os.getcwd(), self.args.path))
+        if self.args.path!="" and not exists:
+            print("error: path not found")
+            exit(1)
+
+    def cueParse(self):
+        currenttrack = 0
+        for line in self.cue:
+            cueline = [x for x in line.split(" ") if x!=""]
+            if cueline!=[]:
+                if cueline[0]=="REM":
+                    if cueline[1]=="COMMENT" and self.args.message!=None:
+                        self.rems['COMMENT'] = self.args.message
+                    else:
+                        self.rems[cueline[1]] = " ".join(cueline[2:])
+                elif cueline[0]=="FILE":
+                    self.rems[cueline[0]] = " ".join(" ".join(cueline[1:]).split(" ")[:-1])
+                elif cueline[0]=="PERFORMER" or cueline[0]=="TITLE" or cueline[0]=="FLAGS":
+                    if currenttrack!=0:
+                        self.tracks[currenttrack][cueline[0]] = " ".join(cueline[1:])
+                    else:
+                        self.rems[cueline[0]] = " ".join(cueline[1:])
+                elif cueline[0]=="TRACK":
+                    currenttrack = cueline[1]
+                    self.tracks[currenttrack] = {}
+                elif cueline[0]=="INDEX":
+                    if not "INDEX" in self.tracks[currenttrack].keys():
+                        self.tracks[currenttrack]["INDEX"] = cueline[2]
+                else:
+                    print("UNSUPPORTED: " + cueline[0])
+        self.tracks = list(self.tracks.values())
+    
+    def tagList(self):
+        for i in range(len(self.tracks)):
+            if self.args.tags_index:
+                if not i+1 in self.args.tags_index: continue
+            track = self.rems|self.tracks[i]
+            if self.args.tag: track = track|self.args.tag
+            if self.args.remove_tag:
+                for tag in self.args.remove_tag:
+                    if tag in track: track.pop(tag)
+            print()
+            print(f"[TAG LIST] -> [{i+1}]")
+            for i in track: print(f"{i}: {track[i]}")
         print()
-        print(f"[TAG LIST] -> [{i+1}]")
-        for i in track: print(f"{i}: {track[i]}")
-    print()
-    exit(0)
+        exit(0)
 
-formatConversion = False
-if not args.list and "flac" not in getformat(rems['FILE']):
-    formatConversion = rems['FILE']
-    converted = formatConversion.rstrip('\"').split(".")[0]
-    if "ape" in getformat(rems['FILE']):
-        os.system(f"mac {rems['FILE']} auto -d")
-        os.system(f'flac --totally-silent --delete-input-file --best {converted}.wav" -o {converted}.flac"')
-    elif "m4a" in getformat(rems['FILE']):
-        os.system(f'ffmpeg -i {rems["FILE"]} {converted}.flac"')
-    elif "wav" in getformat(rems['FILE']):
-        os.system(f'flac --totally-silent --delete-input-file --best {converted}.wav" -o {converted}.flac"')
-    rems['FILE'] = converted+'.flac"'
+    def trackList(self):
+        for i in range(len(self.tracks)):
+            track = self.tracks[i]
+            if self.args.track!=None:
+                if i+1 not in self.args.track:
+                    continue
+            if self.args.list:
+                print(f"[TRACK LIST] -> {track['TITLE']} ({i+1})")
+        exit(0)
 
-for i in range(len(tracks)):
-    track = tracks[i]
-    if args.track!=None:
-        if i+1 not in args.track:
-            continue
-    if args.list:
-        print(f"[TRACK LIST] -> {track['TITLE']} ({i+1})")
-    else:
-        if len(tracks)>i+1:
-            nexttime = " --until="+timegen(tracks[i+1]['INDEX'])
-        else:
-            nexttime = ""
-        title = track['TITLE'].rstrip('\"') + f'.{getformat(rems["FILE"])}'
-        if title.startswith('"') and not title.endswith('"'): title = title+'"'
-        time = timegen(track['INDEX'])
+    def convertFile(self):
+        self.sourceFile = self.rems['FILE']
+        converted = self.sourceFile.rstrip('\"').split(".")[0]
+        if "ape" in self.getFileFormat(self.rems['FILE']):
+            os.system(f"mac {self.rems['FILE']} auto -d")
+            os.system(f'flac --totally-silent --delete-input-file --best {converted}.wav" -o {converted}.flac"')
+        elif "m4a" in self.getFileFormat(self.rems['FILE']):
+            os.system(f'ffmpeg -i {self.rems["FILE"]} {converted}.flac"')
+        elif "wav" in self.getFileFormat(self.rems['FILE']):
+            os.system(f'flac --totally-silent --delete-input-file --best {converted}.wav" -o {converted}.flac"')
+        self.rems['FILE'] = converted+'.flac"'
+    
+    def splitFlac(self):
+        for i in range(len(self.tracks)):
+            track = self.tracks[i]
+            if self.args.track!=None:
+                if i+1 not in self.args.track:
+                    continue
+            if len(self.tracks)>i+1:
+                nexttime = " --until="+self.formatTime(self.tracks[i+1]['INDEX'])
+            else:
+                nexttime = ""
+            title = track['TITLE'].rstrip('\"') + f'.{self.getFileFormat(self.rems["FILE"])}'
+            if title.startswith('"') and not title.endswith('"'): title = title+'"'
+            time = self.formatTime(track['INDEX'])
 
+            metadata = self.getMetadata(track)
+            
+            execlines = [f"flac --totally-silent --best -f -c {self.rems['FILE']} --skip={time}{nexttime} -o {self.args.path}{title}"]
+            execlines.append(f"metaflac --no-utf8-convert --remove-all-tags {' '.join(metadata)} {self.args.path}{title}")
+            
+            if self.args.dry:
+                print("\n".join(execlines))
+            else:
+                for execline in execlines:
+                    os.system(execline)
+                print(f"[SPLIT] {self.rems['FILE']} -> {self.args.path}{title} ({i+1}/{len(self.tracks)})")
+    
+    def getMetadata(self, track):
         metadata = []
-        trackdata = rems|track
-        if args.tag: trackdata = trackdata|args.tag
-        if args.remove_tag:
-            for tag in args.remove_tag:
+        trackdata = self.rems|track
+        if self.args.tag: trackdata = trackdata|self.args.tag
+        if self.args.remove_tag:
+            for tag in self.args.remove_tag:
                 if tag in trackdata: trackdata.pop(tag)
         for rem in trackdata:
             if trackdata[rem][0]!='"': trackdata[rem] = f'"{trackdata[rem]}"'
             metadata.append(f'--set-tag={rem}={trackdata[rem]}')
-        
-        execlines = [f"flac --totally-silent --best -f -c {rems['FILE']} --skip={time}{nexttime} -o {args.path}{title}"] # TODO: make m4a and others formats support
-        execlines.append(f"metaflac --no-utf8-convert --remove-all-tags {' '.join(metadata)} {args.path}{title}")
+        return metadata
 
-        if args.dry:
-            print("\n".join(execlines))
-        else:
-            for execline in execlines:
-                os.system(execline)
-            print(f"[SPLIT] {rems['FILE']} -> {args.path}{title} ({i+1}/{len(tracks)})")
+    def cleanup(self):
+        if self.args.remove or self.sourceFile!=False:
+            try:
+                if self.sourceFile!=False: os.remove(self.sourceFile.replace('"', ''))
+                os.remove(self.rems['FILE'].replace('"',''))
+                if self.args.remove_cue: os.remove(self.args.cue)
+            except Exception as e:
+                print(f"error: {e}")
 
-if (args.remove or formatConversion!=False) and not (args.list):
-    try:
-        if formatConversion!=False: os.remove(formatConversion.replace('"', ''))
-        os.remove(rems['FILE'].replace('"',''))
-        if args.remove_cue: os.remove(args.cue)
-    except Exception as e:
-        print(f"error: {e}")
+    @staticmethod
+    def formatTime(time):
+        minutes,seconds,ticks = time.split(":")
+        return f"{minutes}:{seconds}.{ticks}"
+
+    @staticmethod
+    def getFileFormat(file):
+        return file.split(".")[-1]
+
+
+if __name__=="__main__":
+    main()
