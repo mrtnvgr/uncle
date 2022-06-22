@@ -1,9 +1,10 @@
 #!/bin/python3
 import argparse, os
+from math import floor
 
 class main:
     def __init__(self):
-        self.version = "0.1.5"
+        self.version = "0.1.6"
         self.rems = {}
         self.tracks = {}
         self.sourceFile = False
@@ -29,6 +30,7 @@ class main:
         parser.add_argument("-c", "--cue")
         parser.add_argument("-p", "--path", default="")
         parser.add_argument("-t", "--track", help="track index to extract", action="append", type=int)
+        parser.add_argument("-tf", "--title-format", help="track title format", default="{TITLE}")
         parser.add_argument("-m", "--message", help="replace 'COMMENT' tag")
         parser.add_argument("-tg", "--tag", help="replace any tag(s)\nExample: 'TAG1:Text1|TAG2:Text2'", type=lambda x: {k:v for k,v in (i.split(':') for i in x.split('|'))})
         parser.add_argument("-rtg", "--remove-tag", help="remove tag from tracks", action="append")
@@ -63,7 +65,7 @@ class main:
         for line in self.cue:
             cueline = [x for x in line.split(" ") if x!=""]
             if cueline!=[]:
-                if cueline[0]=="REM":
+                if "REM" in cueline[0]:
                     if cueline[1]=="COMMENT" and self.args.message!=None:
                         self.rems['COMMENT'] = self.args.message
                     else:
@@ -134,6 +136,7 @@ class main:
                 nexttime = ""
             title = track['TITLE'].rstrip('\"') + f'.{self.getFileFormat(self.rems["FILE"])}'
             if title.startswith('"') and not title.endswith('"'): title = title+'"'
+            title = self.parseTitleFormat(track, i+1, self.getFileFormat(title))
             time = self.formatTime(track['INDEX'])
 
             metadata = self.getMetadata(track)
@@ -169,6 +172,20 @@ class main:
             except Exception as e:
                 print(f"error: {e}")
 
+    def parseTitleFormat(self, track, index, format):
+        format = format.removesuffix('"')
+        titleformat = self.args.title_format
+        formats = {"{TITLE}": track.get("TITLE", ""),
+                   "{INDEX}": self.formatIndex(index),
+                   "{PERFORMER}": track.get("PERFORMER", "")}
+        for i in formats:
+            titleformat = titleformat.replace(i, self.removeQuotes(formats[i]))
+        return f'"{titleformat}".{format}'
+
+    @staticmethod
+    def removeQuotes(text):
+        return text.removeprefix('"').removesuffix('"')
+    
     @staticmethod
     def formatTime(time):
         minutes,seconds,ticks = time.split(":")
@@ -178,6 +195,10 @@ class main:
     def getFileFormat(file):
         return file.split(".")[-1]
 
+    @staticmethod
+    def formatIndex(index, max=2):
+        ret = str(floor(index))
+        return "0" * (max - len(ret)) + ret
 
 if __name__=="__main__":
     main()
