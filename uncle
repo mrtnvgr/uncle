@@ -4,10 +4,9 @@ from math import floor
 
 class main:
     def __init__(self):
-        self.version = "0.1.6"
+        self.version = "0.1.7"
         self.rems = {}
         self.tracks = {}
-        self.sourceFile = False
         self.runtime()
         
     def runtime(self):
@@ -19,7 +18,8 @@ class main:
         elif self.args.list:
             self.trackList()
         else:
-            if "flac" not in self.getFileFormat(self.rems["FILE"]):
+            formats = self.getFileFormat(self.getSourceFiles())
+            if not any(s for s in formats if "flac" in s):
                 self.convertFile()
             self.splitFlac()
         self.cleanup()
@@ -40,6 +40,7 @@ class main:
         parser.add_argument("-r", "--remove", help="remove source file", action="store_true")
         parser.add_argument("-rc", "--remove-cue", help="remove source cue file", action="store_true")
         parser.add_argument("-d", "--dry", help="only print commands", action="store_true")
+        parser.add_argument("--verbose", help="flac converter silent mode", action="store_true")
         parser.add_argument("-v", "--version", action="store_true")
         self.args = parser.parse_args()
 
@@ -71,7 +72,7 @@ class main:
                     else:
                         self.rems[cueline[1]] = " ".join(cueline[2:])
                 elif cueline[0]=="FILE":
-                    self.rems[cueline[0]] = " ".join(" ".join(cueline[1:]).split(" ")[:-1])
+                    currentfile = " ".join(" ".join(cueline[1:]).split(" ")[:-1])
                 elif cueline[0]=="PERFORMER" or cueline[0]=="TITLE" or cueline[0]=="FLAGS":
                     if currenttrack!=0:
                         self.tracks[currenttrack][cueline[0]] = " ".join(cueline[1:])
@@ -79,7 +80,7 @@ class main:
                         self.rems[cueline[0]] = " ".join(cueline[1:])
                 elif cueline[0]=="TRACK":
                     currenttrack = cueline[1]
-                    self.tracks[currenttrack] = {}
+                    self.tracks[currenttrack] = {"FILE": currentfile}
                 elif cueline[0]=="INDEX":
                     if not "INDEX" in self.tracks[currenttrack].keys():
                         self.tracks[currenttrack]["INDEX"] = cueline[2]
@@ -113,16 +114,19 @@ class main:
         exit(0)
 
     def convertFile(self):
-        self.sourceFile = self.rems['FILE']
-        converted = self.sourceFile.rstrip('\"').split(".")[0]
-        if "ape" in self.getFileFormat(self.rems['FILE']):
-            os.system(f"mac {self.rems['FILE']} auto -d")
-            os.system(f'flac --totally-silent --delete-input-file --best {converted}.wav" -o {converted}.flac"')
-        elif "m4a" in self.getFileFormat(self.rems['FILE']):
-            os.system(f'ffmpeg -i {self.rems["FILE"]} {converted}.flac"')
-        elif "wav" in self.getFileFormat(self.rems['FILE']):
-            os.system(f'flac --totally-silent --delete-input-file --best {converted}.wav" -o {converted}.flac"')
-        self.rems['FILE'] = converted+'.flac"'
+        for i in range(len(self.tracks)):
+            track = self.tracks[i]
+            sourceFile = track["FILE"]
+            converted = sourceFile.rstrip('\"').split(".")[0]
+            fileFormat = self.getFileFormat(sourceFile)
+            if "ape" in fileFormat:
+                os.system(f"mac {sourceFile} auto -d")
+                os.system(f'flac {self.getSilent()}--delete-input-file --best {converted}.wav" -o {converted}.flac"')
+            elif "m4a" in fileFormat:
+                os.system(f'ffmpeg -i {sourceFile} {converted}.flac"')
+            elif "wav" in fileFormat:
+                os.system(f'flac {self.getSilent()}--delete-input-file --best {converted}.wav" -o {converted}.flac"')
+            self.tracks[i]["FILE"] = converted+'.flac"'
     
     def splitFlac(self):
         for i in range(len(self.tracks)):
@@ -134,14 +138,15 @@ class main:
                 nexttime = " --until="+self.formatTime(self.tracks[i+1]['INDEX'])
             else:
                 nexttime = ""
-            title = track['TITLE'].rstrip('\"') + f'.{self.getFileFormat(self.rems["FILE"])}'
+
+            title = track['TITLE'].rstrip('\"') + f'.{self.getFileFormat(track["FILE"])}'
             if title.startswith('"') and not title.endswith('"'): title = title+'"'
             title = self.parseTitleFormat(track, i+1, self.getFileFormat(title))
             time = self.formatTime(track['INDEX'])
 
             metadata = self.getMetadata(track)
             
-            execlines = [f"flac --totally-silent --best -f -c {self.rems['FILE']} --skip={time}{nexttime} -o {self.args.path}{title}"]
+            execlines = [f"flac {self.getSilent()}--best -f -c {track['FILE']} --skip={time}{nexttime} -o {self.args.path}{title}"]
             execlines.append(f"metaflac --no-utf8-convert --remove-all-tags {' '.join(metadata)} {self.args.path}{title}")
             
             if self.args.dry:
@@ -149,7 +154,7 @@ class main:
             else:
                 for execline in execlines:
                     os.system(execline)
-                print(f"[SPLIT] {self.rems['FILE']} -> {self.args.path}{title} ({i+1}/{len(self.tracks)})")
+                print(f"[SPLIT] {track['FILE']} -> {self.args.path}{title} ({i+1}/{len(self.tracks)})")
     
     def getMetadata(self, track):
         metadata = []
@@ -163,11 +168,25 @@ class main:
             metadata.append(f'--set-tag={rem}={trackdata[rem]}')
         return metadata
 
+    def getSourceFiles(self):
+        files = []
+        for track in self.tracks:
+            file = track["FILE"]
+            if file not in files:
+                files.append(file)
+        return files
+
+    def getSilent(self):
+        if not self.args.verbose:
+            return "--totally-silent "
+        else:
+            return ""
+
     def cleanup(self):
-        if self.args.remove or self.sourceFile!=False:
+        if self.args.remove and not self.args.dry:
             try:
-                if self.sourceFile!=False: os.remove(self.sourceFile.replace('"', ''))
-                os.remove(self.rems['FILE'].replace('"',''))
+                for file in self.getSourceFiles():
+                    os.remove(file.replace('"',''))
                 if self.args.remove_cue: os.remove(self.args.cue)
             except Exception as e:
                 print(f"error: {e}")
@@ -193,7 +212,10 @@ class main:
 
     @staticmethod
     def getFileFormat(file):
-        return file.split(".")[-1]
+        if type(file) is str:
+            return file.split(".")[-1]
+        elif type(file) is list:
+            return [part.split(".")[-1] for part in file]
 
     @staticmethod
     def formatIndex(index, max=2):
