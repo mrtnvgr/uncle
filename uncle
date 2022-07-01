@@ -4,7 +4,7 @@ from math import floor
 
 class main:
     def __init__(self):
-        self.version = "0.1.7"
+        self.version = "0.1.8"
         self.rems = {}
         self.tracks = {}
         self.runtime()
@@ -144,6 +144,7 @@ class main:
             title = track['TITLE'].rstrip('\"') + f'.{self.getFileFormat(track["FILE"])}'
             if title.startswith('"') and not title.endswith('"'): title = title+'"'
             title = self.parseTitleFormat(track, i+1, self.getFileFormat(title))
+            title = self.checkTitle(title)
 
             metadata = self.getMetadata(track)
             
@@ -201,6 +202,12 @@ class main:
         for i in formats:
             titleformat = titleformat.replace(i, self.removeQuotes(formats[i]))
         return f'"{titleformat}".{format}'
+
+    @staticmethod
+    def checkTitle(title):
+        if os.name=="posix": # linux
+            title = title.replace("/", "⁄") # slash to fraction slash (https://stackoverflow.com/questions/9847288/is-it-possible-to-use-in-a-filename)
+        return title
 
     @staticmethod
     def removeQuotes(text):
