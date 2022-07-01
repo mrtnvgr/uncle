@@ -134,7 +134,9 @@ class main:
             if self.args.track!=None:
                 if i+1 not in self.args.track:
                     continue
-            if len(self.tracks)>i+1:
+
+            time = self.formatTime(track['INDEX'])
+            if len(self.tracks)>i+1 and (track["FILE"]==self.tracks[i+1]["FILE"]):
                 nexttime = " --until="+self.formatTime(self.tracks[i+1]['INDEX'])
             else:
                 nexttime = ""
@@ -142,7 +144,6 @@ class main:
             title = track['TITLE'].rstrip('\"') + f'.{self.getFileFormat(track["FILE"])}'
             if title.startswith('"') and not title.endswith('"'): title = title+'"'
             title = self.parseTitleFormat(track, i+1, self.getFileFormat(title))
-            time = self.formatTime(track['INDEX'])
 
             metadata = self.getMetadata(track)
             
