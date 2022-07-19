@@ -4,7 +4,7 @@ from math import floor
 
 class main:
     def __init__(self):
-        self.version = "0.1.8"
+        self.version = "0.1.9"
         self.rems = {}
         self.tracks = {}
         self.runtime()
@@ -73,7 +73,7 @@ class main:
                         self.rems[cueline[1]] = " ".join(cueline[2:])
                 elif cueline[0]=="FILE":
                     currentfile = " ".join(" ".join(cueline[1:]).split(" ")[:-1])
-                elif cueline[0]=="PERFORMER" or cueline[0]=="TITLE" or cueline[0]=="FLAGS":
+                elif cueline[0] in ["PERFORMER","TITLE","FLAGS","ISRC","CATALOG"]:
                     if currenttrack!=0:
                         self.tracks[currenttrack][cueline[0]] = " ".join(cueline[1:])
                     else:
